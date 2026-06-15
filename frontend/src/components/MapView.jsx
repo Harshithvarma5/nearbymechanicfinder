@@ -1,165 +1,104 @@
-import React, { useCallback, useState } from 'react';
-import { GoogleMap, useJsApiLoader, Marker, InfoWindow } from '@react-google-maps/api';
+import React, { useCallback, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
 
-const darkMapStyle = [
-  { elementType: "geometry", stylers: [{ color: "#242f3e" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#746855" }] },
-  {
-    featureType: "administrative.locality",
-    elementType: "labels.text.fill",
-    stylers: [{ color: "#d59563" }],
-  },
-  {
-    featureType: "poi",
-    elementType: "labels.text.fill",
-    stylers: [{ color: "#d59563" }],
-  },
-  {
-    featureType: "poi.park",
-    elementType: "geometry",
-    stylers: [{ color: "#263c3f" }],
-  },
-  {
-    featureType: "poi.park",
-    elementType: "labels.text.fill",
-    stylers: [{ color: "#6b9a76" }],
-  },
-  {
-    featureType: "road",
-    elementType: "geometry",
-    stylers: [{ color: "#38414e" }],
-  },
-  {
-    featureType: "road",
-    elementType: "geometry.stroke",
-    stylers: [{ color: "#212a37" }],
-  },
-  {
-    featureType: "road",
-    elementType: "labels.text.fill",
-    stylers: [{ color: "#9ca5b3" }],
-  },
-  {
-    featureType: "road.highway",
-    elementType: "geometry",
-    stylers: [{ color: "#746855" }],
-  },
-  {
-    featureType: "road.highway",
-    elementType: "geometry.stroke",
-    stylers: [{ color: "#1f2835" }],
-  },
-  {
-    featureType: "road.highway",
-    elementType: "labels.text.fill",
-    stylers: [{ color: "#f3d19c" }],
-  },
-  {
-    featureType: "transit",
-    elementType: "geometry",
-    stylers: [{ color: "#2f3948" }],
-  },
-  {
-    featureType: "transit.station",
-    elementType: "labels.text.fill",
-    stylers: [{ color: "#d59563" }],
-  },
-  {
-    featureType: "water",
-    elementType: "geometry",
-    stylers: [{ color: "#17263c" }],
-  },
-  {
-    featureType: "water",
-    elementType: "labels.text.fill",
-    stylers: [{ color: "#515c6d" }],
-  },
-  {
-    featureType: "water",
-    elementType: "labels.text.stroke",
-    stylers: [{ color: "#17263c" }],
-  },
-];
+// Helper to construct custom Leaflet icons using Google's colored map pins
+const createDotIcon = (url) => new L.Icon({
+    iconUrl: url,
+    iconSize: [32, 32],      // Adjusted size for standard map dots
+    iconAnchor: [16, 32],    // Point of the icon which corresponds to marker's location
+    popupAnchor: [0, -32],   // Point from which the popup should open relative to the anchor
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    shadowSize: [41, 41],
+    shadowAnchor: [12, 41]
+});
+
+const userIcon = createDotIcon("https://maps.google.com/mapfiles/ms/icons/blue-dot.png");
+const pendingIcon = createDotIcon("https://maps.google.com/mapfiles/ms/icons/purple-dot.png");
+const redIcon = createDotIcon("https://maps.google.com/mapfiles/ms/icons/red-dot.png");
+const greenIcon = createDotIcon("https://maps.google.com/mapfiles/ms/icons/green-dot.png");
+const orangeIcon = createDotIcon("https://maps.google.com/mapfiles/ms/icons/orange-dot.png");
 
 const containerStyle = {
   width: '100%',
   height: '100%'
 };
 
-const libraries = ['places'];
+// Component to handle dynamic map panning/re-centering
+const ChangeMapView = ({ center, zoom }) => {
+    const map = useMap();
+    useEffect(() => {
+        if (center && center[0] && center[1]) {
+            map.setView(center, zoom);
+        }
+    }, [center, zoom, map]);
+    return null;
+};
+
+// Component to handle map clicks for picker mode
+const MapEventsHandler = ({ isPicker, onMapClick }) => {
+    useMapEvents({
+        click(e) {
+            if (isPicker && onMapClick) {
+                onMapClick({
+                    lat: e.latlng.lat,
+                    lng: e.latlng.lng
+                });
+            }
+        }
+    });
+    return null;
+};
 
 const MapView = ({ userLocation, mechanics, selectedMechanicId, onMarkerClick, theme, isPicker, onMapClick, pendingLocation }) => {
-    const [map, setMap] = useState(null);
-
-    const { isLoaded } = useJsApiLoader({
-        id: 'google-map-script',
-        googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
-        libraries
-    });
-
-    const onLoad = useCallback(function callback(map) {
-        setMap(map);
-    }, []);
-
-    const onUnmount = useCallback(function callback(map) {
-        setMap(null);
-    }, []);
-
-    const handleMapClick = (e) => {
-        if (isPicker && onMapClick) {
-            onMapClick({
-                lat: e.latLng.lat(),
-                lng: e.latLng.lng()
-            });
-        }
-    };
-
-    if (!isLoaded) return <div className="loading-container">Loading Map...</div>;
-
     const defaultCenter = {
         lat: 17.3850,
         lng: 78.4867
     };
 
     const center = pendingLocation || userLocation || defaultCenter;
+    const centerLatLng = center && center.lat && center.lng ? [center.lat, center.lng] : [defaultCenter.lat, defaultCenter.lng];
+    const zoom = isPicker ? 16 : 13;
 
     return (
-        <GoogleMap
-            mapContainerStyle={containerStyle}
-            center={center}
-            zoom={isPicker ? 16 : 13}
-            onLoad={onLoad}
-            onUnmount={onUnmount}
-            onClick={handleMapClick}
-            options={{
-                disableDefaultUI: false,
-                zoomControl: true,
-                styles: theme === 'dark' ? darkMapStyle : []
-            }}
+        <MapContainer
+            center={centerLatLng}
+            zoom={zoom}
+            style={containerStyle}
+            zoomControl={true}
         >
+            <TileLayer
+                url={theme === 'dark' 
+                    ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                    : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                }
+                attribution={theme === 'dark'
+                    ? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                    : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }
+            />
+
+            {/* Programmatically change center/zoom when location updates */}
+            <ChangeMapView center={centerLatLng} zoom={zoom} />
+
+            {/* Map click listener for coordinate picker */}
+            <MapEventsHandler isPicker={isPicker} onMapClick={onMapClick} />
+
             {/* User Location Marker */}
-            {userLocation && !isPicker && (
+            {userLocation && !isPicker && userLocation.lat && userLocation.lng && (
                 <Marker
-                    key="user-location"
-                    position={userLocation}
-                    icon={{
-                        url: "http://maps.google.com/mapfiles/ms/icons/blue-dot.png"
-                    }}
+                    position={[userLocation.lat, userLocation.lng]}
+                    icon={userIcon}
                     title="You are here"
                 />
             )}
 
             {/* Pending Location Marker (for registration) */}
-            {isPicker && pendingLocation && (
+            {isPicker && pendingLocation && pendingLocation.lat && pendingLocation.lng && (
                 <Marker
-                    key="pending-location"
-                    position={pendingLocation}
-                    icon={{
-                        url: "http://maps.google.com/mapfiles/ms/icons/purple-dot.png"
-                    }}
+                    position={[pendingLocation.lat, pendingLocation.lng]}
+                    icon={pendingIcon}
                     title="Selected Shop Location"
-                    animation={window.google ? window.google.maps.Animation.DROP : null}
                 />
             )}
 
@@ -170,31 +109,29 @@ const MapView = ({ userLocation, mechanics, selectedMechanicId, onMarkerClick, t
                 const isSelected = selectedMechanicId === id;
                 const isGoogle = mech.source === 'google';
                 
-                // Color mapping:
-                // Selected: Red (#ef4444)
-                // DB: Orange (#f97316)
-                // Google: Emerald (#10b981)
-                
-                let iconUrl = "http://maps.google.com/mapfiles/ms/icons/orange-dot.png";
+                let icon = orangeIcon;
                 if (isSelected) {
-                    iconUrl = "http://maps.google.com/mapfiles/ms/icons/red-dot.png";
+                    icon = redIcon;
                 } else if (isGoogle) {
-                    iconUrl = "http://maps.google.com/mapfiles/ms/icons/green-dot.png";
+                    icon = greenIcon;
                 }
+
+                if (typeof mech.lat !== 'number' || typeof mech.lng !== 'number') return null;
 
                 return (
                     <Marker
                         key={uniqueKey}
-                        position={{ lat: mech.lat, lng: mech.lng }}
-                        onClick={() => onMarkerClick(mech)}
+                        position={[mech.lat, mech.lng]}
+                        eventHandlers={{
+                            click: () => onMarkerClick(mech)
+                        }}
                         title={mech.shopName}
-                        icon={{ url: iconUrl }}
-                        zIndex={isSelected ? 1000 : 1}
-                        animation={isSelected && window.google ? window.google.maps.Animation.BOUNCE : null}
+                        icon={icon}
+                        zIndexOffset={isSelected ? 1000 : 0}
                     />
                 );
             })}
-        </GoogleMap>
+        </MapContainer>
     );
 };
 

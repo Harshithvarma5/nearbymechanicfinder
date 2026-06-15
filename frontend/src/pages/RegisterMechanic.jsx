@@ -1,22 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { registerMechanic } from '../services/api';
 import Navbar from '../components/Navbar';
 import { Wrench, Phone, MapPin, CheckCircle } from 'lucide-react';
-import { Autocomplete, useJsApiLoader } from '@react-google-maps/api';
 import MapView from '../components/MapView';
-
-const libraries = ['places'];
 
 const RegisterMechanic = ({ theme, toggleTheme, showToast }) => {
     const navigate = useNavigate();
-    
-    // Load Google Maps script globally for Autocomplete
-    const { isLoaded } = useJsApiLoader({
-        id: 'google-map-script',
-        googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
-        libraries
-    });
 
     const [formData, setFormData] = useState({
         name: '',
@@ -30,27 +20,73 @@ const RegisterMechanic = ({ theme, toggleTheme, showToast }) => {
     const [loading, setLoading] = useState(false);
     const [success, setSuccess] = useState(false);
     const [error, setError] = useState(null);
-    const [autocomplete, setAutocomplete] = useState(null);
+    
+    // OSM Nominatim Geocoding state
+    const [suggestions, setSuggestions] = useState([]);
+    const [showSuggestions, setShowSuggestions] = useState(false);
+    const [geocodingLoading, setGeocodingLoading] = useState(false);
+    
+    const debounceTimeout = useRef(null);
+    const autocompleteRef = useRef(null);
 
-    const onAutocompleteLoad = (autocompleteInstance) => {
-        setAutocomplete(autocompleteInstance);
-    };
+    const handleAddressChange = (e) => {
+        const value = e.target.value;
+        setFormData(prev => ({
+            ...prev,
+            address: value
+        }));
 
-    const onPlaceChanged = () => {
-        if (autocomplete !== null) {
-            const place = autocomplete.getPlace();
-            if (place.geometry && place.geometry.location) {
-                const lat = place.geometry.location.lat();
-                const lng = place.geometry.location.lng();
-                setFormData(prev => ({
-                    ...prev,
-                    address: place.formatted_address || '',
-                    lat: lat.toString(),
-                    lng: lng.toString()
-                }));
-            }
+        if (debounceTimeout.current) {
+            clearTimeout(debounceTimeout.current);
         }
+
+        if (value.trim().length < 3) {
+            setSuggestions([]);
+            return;
+        }
+
+        debounceTimeout.current = setTimeout(async () => {
+            setGeocodingLoading(true);
+            try {
+                const response = await fetch(
+                    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(value)}&limit=5&addressdetails=1`
+                );
+                const data = await response.json();
+                setSuggestions(data || []);
+                setShowSuggestions(true);
+            } catch (err) {
+                console.error("OSM Nominatim Geocoding error:", err);
+            } finally {
+                setGeocodingLoading(false);
+            }
+        }, 600);
     };
+
+    const handleSelectSuggestion = (place) => {
+        setFormData(prev => ({
+            ...prev,
+            address: place.display_name,
+            lat: parseFloat(place.lat).toFixed(6),
+            lng: parseFloat(place.lon).toFixed(6)
+        }));
+        setShowSuggestions(false);
+        setSuggestions([]);
+    };
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (autocompleteRef.current && !autocompleteRef.current.contains(event.target)) {
+                setShowSuggestions(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+            if (debounceTimeout.current) {
+                clearTimeout(debounceTimeout.current);
+            }
+        };
+    }, []);
 
     const detectLocation = () => {
         if (navigator.geolocation) {
@@ -203,41 +239,64 @@ const RegisterMechanic = ({ theme, toggleTheme, showToast }) => {
                             </div>
                         </div>
 
-                        <div className="form-group">
-                            <label htmlFor="address">Full Address (Autocomplete)</label>
+                        <div className="form-group" ref={autocompleteRef} style={{ position: 'relative' }}>
+                            <label htmlFor="address">Full Address (Search Autocomplete)</label>
                             <div className="input-with-icon">
                                 <MapPin size={16} />
-                                {isLoaded ? (
-                                    <Autocomplete
-                                        onLoad={onAutocompleteLoad}
-                                        onPlaceChanged={onPlaceChanged}
-                                        style={{ width: '100%' }}
-                                    >
-                                        <input
-                                            type="text"
-                                            id="address"
-                                            name="address"
-                                            value={formData.address}
-                                            onChange={handleChange}
-                                            required
-                                            placeholder="Type your shop address..."
-                                            style={{ width: '100%' }}
-                                        />
-                                    </Autocomplete>
-                                ) : (
-                                    <input
-                                        type="text"
-                                        id="address"
-                                        name="address"
-                                        value={formData.address}
-                                        onChange={handleChange}
-                                        required
-                                        placeholder="Loading maps..."
-                                        style={{ width: '100%' }}
-                                        disabled
-                                    />
-                                )}
+                                <input
+                                    type="text"
+                                    id="address"
+                                    name="address"
+                                    value={formData.address}
+                                    onChange={handleAddressChange}
+                                    required
+                                    placeholder="Type your shop address to search..."
+                                    style={{ width: '100%' }}
+                                    onFocus={() => setShowSuggestions(true)}
+                                />
                             </div>
+                            
+                            {geocodingLoading && (
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-light)', marginTop: '4px', paddingLeft: '8px' }}>
+                                    Searching address...
+                                </div>
+                            )}
+
+                            {showSuggestions && suggestions.length > 0 && (
+                                <ul style={{
+                                    position: 'absolute',
+                                    width: '100%',
+                                    backgroundColor: 'var(--card-bg)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: '8px',
+                                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                                    zIndex: 100,
+                                    marginTop: '4px',
+                                    listStyle: 'none',
+                                    padding: 0,
+                                    maxHeight: '200px',
+                                    overflowY: 'auto'
+                                }}>
+                                    {suggestions.map((place) => (
+                                        <li 
+                                            key={place.place_id} 
+                                            onClick={() => handleSelectSuggestion(place)}
+                                            style={{
+                                                padding: '10px 14px',
+                                                cursor: 'pointer',
+                                                borderBottom: '1px solid var(--border-color)',
+                                                fontSize: '0.85rem',
+                                                color: 'var(--text-color)',
+                                                transition: 'background-color 0.2s'
+                                            }}
+                                            onMouseEnter={(e) => e.target.style.backgroundColor = 'rgba(220, 38, 38, 0.1)'}
+                                            onMouseLeave={(e) => e.target.style.backgroundColor = 'transparent'}
+                                        >
+                                            {place.display_name}
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
                         </div>
 
                         <div className="form-group">

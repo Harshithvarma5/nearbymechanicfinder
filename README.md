@@ -6,7 +6,7 @@ A full-stack web application to find nearby bike or car mechanic shops when your
 - Frontend: React (Vite)
 - Backend: Python (FastAPI)
 - Database: MongoDB
-- Maps: Google Maps API
+- Maps: Leaflet + OpenStreetMap + Overpass API
 
 ## Prerequisites
 - Node.js (v18+)
@@ -37,7 +37,6 @@ The backend runs at `http://localhost:8000`. Dummy data is inserted automaticall
 3. Set environment variables (create a `.env` file in `frontend/`):
    ```
    VITE_API_BASE_URL=http://localhost:8000
-   VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
    ```
 4. Run the development server:
    `npm run dev`

@@ -25,7 +25,6 @@ app = FastAPI(title="Nearby Mechanic Finder API")
 # Add a separate collection for OTPs
 otps_collection = db["otps"]
 
-GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
 
 # Create uploads directory for KYC documents
 os.makedirs("uploads/kyc", exist_ok=True)
@@ -337,57 +336,80 @@ async def get_nearby_mechanics(lat: float, lng: float, radius_km: float = 10.0):
         raise HTTPException(status_code=503, detail="Nearby query failed")
 
 @app.get("/places/nearby-mechanics")
-async def get_google_places_mechanics(
+async def get_osm_overpass_mechanics(
     lat: float, 
     lng: float, 
     radius: int = Query(5000, description="Radius in meters")
 ):
-    print(f"DEBUG: GOOGLE_PLACES_API_KEY loaded: {'Yes' if GOOGLE_PLACES_API_KEY else 'No'}")
-    if not GOOGLE_PLACES_API_KEY:
-        raise HTTPException(status_code=500, detail="Google Places API Key not configured")
-
-    # Legacy Google Places Nearby Search endpoint
-    url = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
-    params = {
-        "location": f"{lat},{lng}",
-        "radius": radius,
-        "type": "car_repair",
-        "keyword": "mechanic",
-        "key": GOOGLE_PLACES_API_KEY
-    }
+    overpass_url = "https://overpass-api.de/api/interpreter"
+    overpass_query = f"""
+    [out:json];
+    (
+      node["craft"="car_repair"](around:{radius},{lat},{lng});
+      way["craft"="car_repair"](around:{radius},{lat},{lng});
+      node["shop"="car_repair"](around:{radius},{lat},{lng});
+      way["shop"="car_repair"](around:{radius},{lat},{lng});
+    );
+    out center;
+    """
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, params=params)
+            response = await client.post(
+                overpass_url,
+                content=overpass_query,
+                headers={
+                    "Content-Type": "text/plain",
+                    "User-Agent": "NearbyMechanicFinder/1.0"
+                },
+                timeout=30.0
+            )
             response.raise_for_status()
             data = response.json()
             
-            if data.get("status") != "OK" and data.get("status") != "ZERO_RESULTS":
-                print(f"DEBUG: Google API Error Status: {data.get('status')}")
-                print(f"DEBUG: Google API Error Message: {data.get('error_message', 'No message')}")
-                # Return the raw error if it's not a success status
-                return {"error": data.get("status"), "message": data.get("error_message"), "source": "google_error"}
-
             results = []
-            for place in data.get("results", []):
-                results.append({
-                    "id": place.get("place_id"),
-                    "shopName": place.get("name"),
-                    "lat": place.get("geometry", {}).get("location", {}).get("lat"),
-                    "lng": place.get("geometry", {}).get("location", {}).get("lng"),
-                    "rating": place.get("rating", 0),
-                    "isOpen": place.get("opening_hours", {}).get("open_now", True) if "opening_hours" in place else True,
-                    "address": place.get("vicinity", ""),
-                    "source": "google"
-                })
-            
+            for element in data.get("elements", []):
+                tags = element.get("tags", {})
+                
+                el_lat = element.get("lat") or element.get("center", {}).get("lat")
+                el_lng = element.get("lon") or element.get("center", {}).get("lng")
+                
+                if not el_lat or not el_lng:
+                    continue
+                
+                # Extract address
+                addr_parts = []
+                if "addr:housenumber" in tags:
+                    addr_parts.append(tags["addr:housenumber"])
+                if "addr:street" in tags:
+                    addr_parts.append(tags["addr:street"])
+                if "addr:city" in tags:
+                    addr_parts.append(tags["addr:city"])
+                address = ", ".join(addr_parts) if addr_parts else tags.get("addr:full", "Local Area")
+
+                res = {
+                    "id": f"osm_{element.get('id')}",
+                    "shopName": tags.get("name", "Independent Mechanic"),
+                    "lat": el_lat,
+                    "lng": el_lng,
+                    "rating": 4.0,
+                    "isOpen": None,
+                    "address": address,
+                    "source": "osm"
+                }
+                
+                if "opening_hours" in tags:
+                    res["opening_hours"] = tags["opening_hours"]
+                    
+                results.append(res)
+                
             return results
         except httpx.HTTPStatusError as e:
-            print(f"DEBUG: HTTP Status Error: {e.response.status_code} - {e.response.text}")
-            raise HTTPException(status_code=502, detail=f"Google API returned {e.response.status_code}")
+            print(f"DEBUG: Overpass HTTP Error: {e.response.status_code} - {e.response.text}")
+            raise HTTPException(status_code=502, detail=f"Overpass API returned {e.response.status_code}")
         except Exception as e:
-            print(f"DEBUG: General Exception: {type(e).__name__}: {e}")
-            raise HTTPException(status_code=502, detail=f"Error communicating with Google Places: {str(e)}")
+            print(f"DEBUG: Overpass General Exception: {type(e).__name__}: {e}")
+            raise HTTPException(status_code=502, detail=f"Error communicating with Overpass API: {str(e)}")
 
 @app.put("/mechanics/{phone}/availability")
 async def update_availability(phone: str, status: str, current_user: dict = Depends(get_current_mechanic)):

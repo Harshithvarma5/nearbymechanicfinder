@@ -4,7 +4,50 @@ import { getRequestById } from '../services/api';
 import { Clock, MapPin, Phone, CheckCircle, Loader2, User, Wrench, ShieldCheck, ArrowLeft, MessageSquare, Navigation, AlertCircle, Truck } from 'lucide-react';
 import Navbar from '../components/Navbar';
 import ChatBox from '../components/ChatBox';
-import { GoogleMap, useJsApiLoader, Marker } from '@react-google-maps/api';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+
+// Custom Leaflet icons for tracking
+const mechanicIcon = new L.Icon({
+    iconUrl: 'https://cdn-icons-png.flaticon.com/512/1048/1048329.png',
+    iconSize: [45, 45],
+    iconAnchor: [22, 22],
+    popupAnchor: [0, -22],
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    shadowSize: [41, 41],
+    shadowAnchor: [12, 41]
+});
+
+const towIcon = new L.Icon({
+    iconUrl: 'https://cdn-icons-png.flaticon.com/512/2555/2555013.png',
+    iconSize: [45, 45],
+    iconAnchor: [22, 22],
+    popupAnchor: [0, -22],
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    shadowSize: [41, 41],
+    shadowAnchor: [12, 41]
+});
+
+const defaultIcon = new L.Icon({
+    iconUrl: 'https://maps.google.com/mapfiles/ms/icons/red-dot.png',
+    iconSize: [32, 32],
+    iconAnchor: [16, 32],
+    popupAnchor: [0, -32],
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    shadowSize: [41, 41],
+    shadowAnchor: [12, 41]
+});
+
+// Component to handle dynamic map panning/re-centering for tracking
+const ChangeMapView = ({ center }) => {
+    const map = useMap();
+    useEffect(() => {
+        if (center && center[0] && center[1]) {
+            map.setView(center, map.getZoom());
+        }
+    }, [center, map]);
+    return null;
+};
 
 const TrackingPage = ({ theme, toggleTheme, showToast }) => {
     const { requestId } = useParams();
@@ -12,12 +55,6 @@ const TrackingPage = ({ theme, toggleTheme, showToast }) => {
     const [request, setRequest] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-
-    const { isLoaded } = useJsApiLoader({
-        id: 'google-map-script',
-        googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
-        libraries: ['places']
-    });
 
     const fetchStatus = async () => {
         try {
@@ -168,41 +205,42 @@ const TrackingPage = ({ theme, toggleTheme, showToast }) => {
                             ))}
                         </section>
 
-                        {(status === 'accepted' || status === 'tow_accepted') && isLoaded && request.lat && request.lng && (
+                        {(status === 'accepted' || status === 'tow_accepted') && request.lat && request.lng && (
                             <div className="tracking-map-container" style={{ width: '100%', height: '300px', marginBottom: '2rem', borderRadius: '20px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
-                                <GoogleMap
-                                    mapContainerStyle={{ width: '100%', height: '100%' }}
-                                    center={{ lat: request.lat, lng: request.lng }}
+                                <MapContainer
+                                    center={[request.lat, request.lng]}
                                     zoom={14}
-                                    options={{
-                                        disableDefaultUI: true,
-                                        zoomControl: true,
-                                    }}
+                                    style={{ width: '100%', height: '100%' }}
+                                    zoomControl={true}
                                 >
-                                    <Marker position={{ lat: request.lat, lng: request.lng }} />
+                                    <TileLayer
+                                        url={theme === 'dark' 
+                                            ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                                            : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                                        }
+                                        attribution={theme === 'dark'
+                                            ? '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+                                            : '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                                        }
+                                    />
+                                    
+                                    {/* Programmatic panning when user location/breakdown updates */}
+                                    <ChangeMapView center={[request.lat, request.lng]} />
+                                    
+                                    <Marker position={[request.lat, request.lng]} icon={defaultIcon} />
                                     {request.mechanicLat && request.mechanicLng && (
                                         <Marker 
-                                            position={{ lat: request.mechanicLat, lng: request.mechanicLng }}
-                                            icon={{
-                                                url: 'https://cdn-icons-png.flaticon.com/512/1048/1048329.png',
-                                                scaledSize: (isLoaded && window.google) ? new window.google.maps.Size(50, 50) : null,
-                                                origin: (isLoaded && window.google) ? new window.google.maps.Point(0, 0) : null,
-                                                anchor: (isLoaded && window.google) ? new window.google.maps.Point(25, 25) : null
-                                            }}
+                                            position={[request.mechanicLat, request.mechanicLng]}
+                                            icon={mechanicIcon}
                                         />
                                     )}
                                     {request.towLat && request.towLng && (
                                         <Marker 
-                                            position={{ lat: request.towLat, lng: request.towLng }}
-                                            icon={{
-                                                url: 'https://cdn-icons-png.flaticon.com/512/2555/2555013.png',
-                                                scaledSize: (isLoaded && window.google) ? new window.google.maps.Size(50, 50) : null,
-                                                origin: (isLoaded && window.google) ? new window.google.maps.Point(0, 0) : null,
-                                                anchor: (isLoaded && window.google) ? new window.google.maps.Point(25, 25) : null
-                                            }}
+                                            position={[request.towLat, request.towLng]}
+                                            icon={towIcon}
                                         />
                                     )}
-                                </GoogleMap>
+                                </MapContainer>
                             </div>
                         )}
 
@@ -240,7 +278,7 @@ const TrackingPage = ({ theme, toggleTheme, showToast }) => {
                                     senderPhone={request.userPhone}
                                     receiverName={(mechanic?.name || request.tow_truck?.name) || (isTowRequest ? 'Tow Driver' : 'Mechanic')}
                                     isMechanic={false}
-                                />
+                                  />
                             </section>
                         ) : status === 'pending' || status === 'tow_pending' ? (
                             <div className="waiting-animation" style={{ textAlign: 'center', padding: '2rem 0' }}>
