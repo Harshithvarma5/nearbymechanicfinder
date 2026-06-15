@@ -4,7 +4,7 @@ import { calculateDistance } from '../utils/distance';
 const MechanicCard = ({ mechanic, isSelected, onClick, userLocation }) => {
     const { name, shopName, phone, rating, isOpen, address, source, lat, lng } = mechanic;
 
-    const isGoogle = source === 'google';
+    const isOsm = source === 'osm';
     const distance = userLocation ? calculateDistance(userLocation.lat, userLocation.lng, lat, lng) : null;
 
     const handleCall = (e) => {
@@ -32,7 +32,7 @@ const MechanicCard = ({ mechanic, isSelected, onClick, userLocation }) => {
     const statusInfo = statusMap[availabilityStatus];
 
     return (
-        <div className={`mechanic-card ${isSelected ? 'selected' : ''} ${isGoogle ? 'google-card' : ''}`} onClick={onClick}>
+        <div className={`mechanic-card ${isSelected ? 'selected' : ''} ${isOsm ? 'osm-card' : ''}`} onClick={onClick}>
             <div className="card-header">
                 <div style={{ flex: 1 }}>
                     <h3 className="shop-name">
@@ -47,7 +47,7 @@ const MechanicCard = ({ mechanic, isSelected, onClick, userLocation }) => {
                     <span className={`status-badge ${statusInfo.color}`}>
                         {statusInfo.label}
                     </span>
-                    {isGoogle && <span className="google-badge">Google Place</span>}
+                    {isOsm && <span className="osm-badge">OSM Place</span>}
                 </div>
             </div>
 

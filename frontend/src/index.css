@@ -742,12 +742,12 @@ h1, h2, h3, h4, .nav-brand, .shop-name {
     }
 }
 
-/* Google Places Enhancements */
-.google-card {
+/* OSM Overpass Enhancements */
+.osm-card {
   border-left: 4px solid #10b981;
 }
 
-.google-badge {
+.osm-badge {
   display: inline-block;
   background-color: #ecfdf5;
   color: #059669;

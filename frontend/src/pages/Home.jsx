@@ -3,7 +3,7 @@ import MapView from '../components/MapView';
 import MechanicCard from '../components/MechanicCard';
 import Navbar from '../components/Navbar';
 import Skeleton from '../components/Skeleton';
-import { getMechanics, getNearbyMechanics, getGoogleMechanics, getActiveRequest, createSosRequest } from '../services/api';
+import { getMechanics, getNearbyMechanics, getOsmMechanics, getActiveRequest, createSosRequest } from '../services/api';
 import RequestHelpModal from '../components/RequestHelpModal';
 import MyGarageModal from '../components/MyGarageModal';
 import { AlertTriangle, Clock, ArrowRight, Siren } from 'lucide-react';
@@ -30,30 +30,34 @@ const Home = ({ theme, toggleTheme, showToast }) => {
         setError(null);
         try {
             if (location) {
-                // Fetch from both MongoDB and Google Places
+                // Fetch from both MongoDB and OpenStreetMap (Overpass)
                 const results = await Promise.allSettled([
                     getNearbyMechanics(location.lat, location.lng, 15),
-                    getGoogleMechanics(location.lat, location.lng, 5000)
+                    getOsmMechanics(location.lat, location.lng, 5000)
                 ]);
                 
                 const dbResult = results[0];
-                const googleResult = results[1];
+                const osmResult = results[1];
                 
                 let combined = [];
                 let hasSuccess = false;
 
-                if (dbResult.status === 'fulfilled') {
+                if (dbResult.status === 'fulfilled' && Array.isArray(dbResult.value)) {
                     combined = [...combined, ...dbResult.value];
                     hasSuccess = true;
+                } else if (dbResult.status === 'fulfilled') {
+                    console.warn("MongoDB fetch returned non-array:", dbResult.value);
                 } else {
                     console.error("MongoDB fetch failed:", dbResult.reason);
                 }
 
-                if (googleResult.status === 'fulfilled') {
-                    combined = [...combined, ...googleResult.value];
+                if (osmResult.status === 'fulfilled' && Array.isArray(osmResult.value)) {
+                    combined = [...combined, ...osmResult.value];
                     hasSuccess = true;
+                } else if (osmResult.status === 'fulfilled') {
+                    console.warn("OSM fetch returned non-array:", osmResult.value);
                 } else {
-                    console.warn("Google Places fetch failed:", googleResult.reason);
+                    console.warn("OSM fetch failed:", osmResult.reason);
                 }
                 
                 setMechanics(combined);
@@ -65,8 +69,9 @@ const Home = ({ theme, toggleTheme, showToast }) => {
             } else {
                 // Fetch all from DB
                 const data = await getMechanics();
-                setMechanics(data);
-                setFilteredMechanics(data);
+                const safeData = Array.isArray(data) ? data : [];
+                setMechanics(safeData);
+                setFilteredMechanics(safeData);
             }
         } catch (err) {
             console.error("Critical failure in fetchMechanics", err);
@@ -132,7 +137,7 @@ const Home = ({ theme, toggleTheme, showToast }) => {
             result = result.filter(m => {
                 // If it's a DB mechanic, check availability
                 if (m.availability) return m.availability === 'available';
-                // If it's a Google mechanic, check isOpen
+                // If it's an OSM mechanic, check isOpen
                 return m.isOpen;
             });
         }

@@ -107,12 +107,12 @@ const MapView = ({ userLocation, mechanics, selectedMechanicId, onMarkerClick, t
                 const id = mech._id || mech.id;
                 const uniqueKey = `marker-${mech.source || 'db'}-${id || 'idx'}-${index}`;
                 const isSelected = selectedMechanicId === id;
-                const isGoogle = mech.source === 'google';
+                const isOsm = mech.source === 'osm';
                 
                 let icon = orangeIcon;
                 if (isSelected) {
                     icon = redIcon;
-                } else if (isGoogle) {
+                } else if (isOsm) {
                     icon = greenIcon;
                 }
 

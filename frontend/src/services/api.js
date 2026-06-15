@@ -33,7 +33,7 @@ export const getNearbyMechanics = async (lat, lng, radius_km = 10) => {
     return response.data;
 };
 
-export const getGoogleMechanics = async (lat, lng, radius = 5000) => {
+export const getOsmMechanics = async (lat, lng, radius = 5000) => {
     const response = await api.get('/places/nearby-mechanics', {
         params: { lat, lng, radius },
     });
