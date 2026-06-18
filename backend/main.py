@@ -1,6 +1,6 @@
 import os
 import random
-from fastapi import FastAPI, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends, Query, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import shutil
@@ -11,7 +11,7 @@ from database import db, mechanics_collection, admins_collection, users_collecti
 from bson import ObjectId
 from datetime import datetime, timedelta
 from typing import List, Optional
-from models import MechanicModel, ServiceRequestModel, MechanicCreate, MessageModel, VehicleModel, VendorModel, PartModel, TowTruckModel, TowTruckCreate
+from models import MechanicModel, ServiceRequestModel, MechanicCreate, MessageModel, VehicleModel, VendorModel, PartModel, TowTruckModel, TowTruckCreate, OtpRequest, OtpVerify
 import math
 import httpx
 from dotenv import load_dotenv
@@ -24,6 +24,41 @@ app = FastAPI(title="Nearby Mechanic Finder API")
 
 # Add a separate collection for OTPs
 otps_collection = db["otps"]
+
+
+def normalize_phone(phone: str) -> str:
+    """Strip non-digits so OTP lookup matches login phone consistently."""
+    return "".join(c for c in str(phone).strip() if c.isdigit())
+
+
+async def find_stored_otp(phone: str):
+    """Find OTP doc whether phone was stored as string or legacy int."""
+    clean = normalize_phone(phone)
+    if not clean:
+        return None, clean
+    doc = await otps_collection.find_one({"phone": clean})
+    if not doc and clean.isdigit():
+        doc = await otps_collection.find_one({"phone": int(clean)})
+    return doc, clean
+
+
+async def store_otp(phone: str, role: str, otp: str):
+    """Persist OTP under a normalized string phone key."""
+    clean = normalize_phone(phone)
+    if clean.isdigit():
+        await otps_collection.delete_many({"phone": int(clean)})
+    await otps_collection.update_one(
+        {"phone": clean},
+        {"$set": {"otp": str(otp), "role": role, "createdAt": datetime.utcnow()}},
+        upsert=True,
+    )
+
+
+async def delete_stored_otp(phone: str):
+    clean = normalize_phone(phone)
+    await otps_collection.delete_many({"phone": clean})
+    if clean.isdigit():
+        await otps_collection.delete_many({"phone": int(clean)})
 
 
 # Create uploads directory for KYC documents
@@ -73,9 +108,14 @@ async def websocket_endpoint(websocket: WebSocket, request_id: str):
 
 
 # Setup CORS
+origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -83,26 +123,26 @@ app.add_middleware(
 
 async def initialize_db():
     """Background task to initialize DB without blocking server startup."""
-    print("⏳ Starting background DB initialization...")
+    print("Starting background DB initialization...")
     # Attempt DB connection and seeding
     try:
         # verify_db_connection has its own internal 2.5s timeout via Motor selection timeout
         await verify_db_connection()
         await seed_default_admin()
     except Exception as e:
-        print(f"⚠️ Initial DB check failed: {e}")
+        print(f"WARNING: Initial DB check failed: {e}")
 
     # Create TTL index for OTPs so they expire after 5 minutes
     try:
         await otps_collection.create_index("createdAt", expireAfterSeconds=300)
-        print("✅ TTL index created on otps collection")
+        print("SUCCESS: TTL index created on otps collection")
     except Exception as e:
         print(f"Warning: Could not create TTL index: {e}")
 
     # Create 2dsphere index for location-based queries
     try:
         await mechanics_collection.create_index([("location", "2dsphere")])
-        print("✅ 2dsphere index created on mechanics collection")
+        print("SUCCESS: 2dsphere index created on mechanics collection")
     except Exception as e:
         print(f"Warning: Could not create spatial index: {e}")
 
@@ -149,7 +189,7 @@ async def initialize_db():
                 }
             ]
             await mechanics_collection.insert_many(dummy_mechanics)
-            print("✅ Dummy data inserted with GeoJSON format")
+            print("SUCCESS: Dummy data inserted with GeoJSON format")
     except Exception as e:
         print(f"Warning: Background DB init error: {e}")
 
@@ -157,7 +197,7 @@ async def initialize_db():
 async def startup_db_client():
     # Run DB initialization in the background so it doesn't block server startup
     asyncio.create_task(initialize_db())
-    print("🚀 Server starting... DB init running in background.")
+    print("Server starting... DB init running in background.")
 
 @app.get("/ping")
 async def ping():
@@ -165,8 +205,11 @@ async def ping():
 
 # OTP Endpoints
 @app.post("/auth/request-otp")
-async def request_otp(phone: str, role: str):
+async def request_otp(payload: OtpRequest = Body(...)):
     """Generates and 'sends' a 6-digit OTP after verifying role."""
+    phone = normalize_phone(payload.phone)
+    role = payload.role
+
     if not phone or len(phone) < 10:
         raise HTTPException(status_code=400, detail="Invalid phone number")
 
@@ -197,29 +240,33 @@ async def request_otp(phone: str, role: str):
 
     # Generate 6-digit OTP
     otp = str(random.randint(100000, 999999))
+    await store_otp(phone, role, otp)
     
-    # Store in DB (Upsert)
-    await otps_collection.update_one(
-        {"phone": phone},
-        {"$set": {
-            "otp": otp,
-            "createdAt": datetime.utcnow()
-        }},
-        upsert=True
-    )
-    
-    print(f"DEBUG: OTP for {phone}: {otp} (Simulated SMS Sent)")
+    print(f"DEBUG: OTP for {phone} ({role}): {otp} (Simulated SMS Sent)")
     return {"status": "success", "message": "OTP sent successfully", "otp_debug": otp} # Return otp for demo ease
 
 @app.post("/auth/verify-otp")
-async def verify_otp(phone: str, otp: str, role: str):
+async def verify_otp(payload: OtpVerify):
     """Verifies the 6-digit OTP and generates a JWT token."""
-    stored_otp = await otps_collection.find_one({"phone": phone})
+    phone = normalize_phone(payload.phone)
+    otp = str(payload.otp).strip()
+    role = payload.role
+
+    if not phone or len(phone) < 10:
+        raise HTTPException(status_code=400, detail="Invalid phone number")
+    if not otp or len(otp) != 6:
+        raise HTTPException(status_code=400, detail="Invalid OTP code")
+
+    stored_otp, _ = await find_stored_otp(phone)
     
     if not stored_otp:
         raise HTTPException(status_code=400, detail="OTP expired or not requested")
+
+    stored_role = stored_otp.get("role")
+    if stored_role and stored_role != role:
+        raise HTTPException(status_code=400, detail="OTP was requested for a different login type. Please request a new OTP.")
     
-    if stored_otp["otp"] != otp:
+    if str(stored_otp.get("otp", "")).strip() != otp:
         raise HTTPException(status_code=400, detail="Invalid OTP code")
     
     # Check roles again securely before login
@@ -247,8 +294,7 @@ async def verify_otp(phone: str, otp: str, role: str):
         if not user:
             await users_collection.insert_one({"phone": phone, "createdAt": datetime.utcnow()})
 
-    # Delete OTP after successful verification
-    await otps_collection.delete_one({"phone": phone})
+    await delete_stored_otp(phone)
     
     # Generate JWT
     access_token = create_access_token(data={"sub": phone, "role": role})
@@ -288,6 +334,9 @@ async def get_all_mechanics():
     """Returns all mechanics from the database."""
     try:
         mechanics = await mechanics_collection.find().to_list(1000)
+        for mechanic in mechanics:
+            if "_id" in mechanic:
+                mechanic["id"] = str(mechanic.pop("_id"))
         return mechanics
     except Exception as e:
         raise HTTPException(status_code=503, detail="Database connection failed: Is MongoDB running?")
@@ -439,14 +488,14 @@ async def update_availability(phone: str, status: str, current_user: dict = Depe
             matched_count = result.matched_count
         
         if matched_count == 0:
-            print(f"🔍 DEBUG: Availability update failed - Phone '{phone}' not found.")
+            print(f"[SEARCH] DEBUG: Availability update failed - Phone '{phone}' not found.")
             raise HTTPException(status_code=404, detail="Mechanic not found with this phone number.")
             
         return {"status": "success", "message": f"Availability updated for {matched_count} records to {status}, isOpen set to {is_open}"}
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ DEBUG: Error during availability update: {str(e)}")
+        print(f"[ERROR] DEBUG: Error during availability update: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to update status: {str(e)}")
 
 @app.get("/mechanics/by-phone/{phone}", response_model=MechanicModel)
@@ -454,7 +503,7 @@ async def get_mechanic_by_phone(phone: str):
     """Returns mechanic details by phone number, robustly checking for both string and index."""
     # Strip any potential whitespace
     clean_phone = phone.strip()
-    print(f"🔍 DEBUG: Login attempt for phone: '{clean_phone}' (Length: {len(clean_phone)})")
+    print(f"[SEARCH] DEBUG: Login attempt for phone: '{clean_phone}' (Length: {len(clean_phone)})")
     
     try:
         # Try finding as string (default)
@@ -462,29 +511,29 @@ async def get_mechanic_by_phone(phone: str):
         
         # If not found and numeric, try finding as integer
         if not mechanic and clean_phone.isdigit():
-            print(f"🔍 DEBUG: Not found as string, trying as int: {int(clean_phone)}")
+            print(f"[SEARCH] DEBUG: Not found as string, trying as int: {int(clean_phone)}")
             mechanic = await mechanics_collection.find_one({"phone": int(clean_phone)})
         
         if not mechanic:
-            print(f"🔍 DEBUG: Mechanic login failed - Phone '{clean_phone}' not found in DB.")
+            print(f"[SEARCH] DEBUG: Mechanic login failed - Phone '{clean_phone}' not found in DB.")
             # Check if it exists with a partial match or different field name
             exists_any = await mechanics_collection.find_one({"phone": {"$regex": f".*{clean_phone}.*"}})
             if exists_any:
-                print(f"🔍 DEBUG: Partial match found! DB has: '{exists_any.get('phone')}'")
+                print(f"[SEARCH] DEBUG: Partial match found! DB has: '{exists_any.get('phone')}'")
             
             raise HTTPException(status_code=404, detail=f"Phone {clean_phone} not found in our system. Are you sure it's correct?")
         
-        print(f"✅ DEBUG: Mechanic found: {mechanic.get('shopName')}")
+        print(f"[SUCCESS] DEBUG: Mechanic found: {mechanic.get('shopName')}")
         
         # Ensure _id is handled if needed (pydantic will use it if mapped)
         if "_id" in mechanic:
-            mechanic["id"] = str(mechanic["_id"])
+            mechanic["id"] = str(mechanic.pop("_id"))
             
         return mechanic
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ DEBUG: Error during mechanic lookup: {str(e)}")
+        print(f"[ERROR] DEBUG: Error during mechanic lookup: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # --- Digital Garage (Vehicle Management) Endpoints ---
@@ -625,7 +674,7 @@ try:
 except ImportError:
     genai = None
     GEMINI_AVAILABLE = False
-    print("⚠️  google-generativeai not installed. AI diagnosis endpoint disabled. Run: pip install google-generativeai")
+    print("WARNING: google-generativeai not installed. AI diagnosis endpoint disabled. Run: pip install google-generativeai")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if GEMINI_AVAILABLE and GEMINI_API_KEY:
@@ -677,7 +726,7 @@ async def create_sos_request(request: ServiceRequestModel, current_user: dict = 
         
         result = await db["requests"].insert_one(request_dict)
         request_id = str(result.inserted_id)
-        print(f"🚨 SOS BROADCAST created: {request_id} from {request.userPhone}")
+        print(f"[SOS] SOS BROADCAST created: {request_id} from {request.userPhone}")
         return {"id": request_id, "status": "broadcast", "message": "SOS dispatched to all nearby mechanics!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -685,16 +734,16 @@ async def create_sos_request(request: ServiceRequestModel, current_user: dict = 
 @app.post("/requests")
 async def create_request(request: ServiceRequestModel, current_user: dict = Depends(get_current_user)):
     try:
-        print(f"🔍 DEBUG: Creating request for user: {request.userPhone}")
+        print(f"[SEARCH] DEBUG: Creating request for user: {request.userPhone}")
         request_dict = request.dict()
         request_dict["createdAt"] = datetime.now()
         
         # Explicit collection access
         result = await db["requests"].insert_one(request_dict)
-        print(f"✅ DEBUG: Request created with ID: {result.inserted_id}")
+        print(f"[SUCCESS] DEBUG: Request created with ID: {result.inserted_id}")
         return {"id": str(result.inserted_id)}
     except Exception as e:
-        print(f"❌ DEBUG: Failed to create request: {str(e)}")
+        print(f"[ERROR] DEBUG: Failed to create request: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/requests")
@@ -863,14 +912,12 @@ async def update_request_status(
 async def register_mechanic(mechanic_data: MechanicCreate):
     """Registers a new mechanic shop in MongoDB, preventing duplicates."""
     try:
-        # Check if already registered
+        # Check if already registered (as string or int)
         existing = await mechanics_collection.find_one({"phone": mechanic_data.phone})
+        if not existing and mechanic_data.phone.isdigit():
+            existing = await mechanics_collection.find_one({"phone": int(mechanic_data.phone)})
         if existing:
-             # Just update the existing one or tell them it exists
-             print(f"🔍 DEBUG: Mechanic with phone {mechanic_data.phone} already exists. Updating...")
-             # For now, let's just return the existing one or update it
-             # result = await mechanics_collection.update_many(...)
-             # return existing
+             raise HTTPException(status_code=400, detail="Mechanic shop already registered with this phone number")
         
         # Convert Pydantic model to dict
         mechanic_dict = mechanic_data.dict()

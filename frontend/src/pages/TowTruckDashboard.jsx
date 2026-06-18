@@ -172,7 +172,8 @@ const TowTruckDashboard = ({ theme, toggleTheme, showToast }) => {
                 showToast(`Demo Mode: OTP is ${response.otp_debug}`, 'info');
             }
         } catch (err) {
-            showToast(err.response?.data?.detail || 'Failed to send OTP', 'error');
+            const detail = err.response?.data?.detail;
+            showToast(Array.isArray(detail) ? detail[0].msg : (detail || 'Failed to send OTP'), 'error');
         } finally { setLoading(false); }
     };
 
@@ -187,7 +188,8 @@ const TowTruckDashboard = ({ theme, toggleTheme, showToast }) => {
             setIsLoggedIn(true);
             showToast('Logged in successfully!', 'success');
         } catch (err) {
-            showToast(err.response?.data?.detail || 'Invalid OTP', 'error');
+            const detail = err.response?.data?.detail;
+            showToast(Array.isArray(detail) ? detail[0].msg : (detail || 'Invalid OTP'), 'error');
         } finally { setLoading(false); }
     };
 
@@ -200,7 +202,8 @@ const TowTruckDashboard = ({ theme, toggleTheme, showToast }) => {
             setMode('login');
             setPhone(regForm.phone);
         } catch (err) {
-            showToast(err.response?.data?.detail || 'Registration failed', 'error');
+            const detail = err.response?.data?.detail;
+            showToast(Array.isArray(detail) ? detail[0].msg : (detail || 'Registration failed'), 'error');
         } finally { setLoading(false); }
     };
 
@@ -210,7 +213,8 @@ const TowTruckDashboard = ({ theme, toggleTheme, showToast }) => {
             showToast('🚛 Tow request claimed! Navigate to the user.', 'success');
             fetchRequests();
         } catch (err) {
-            showToast(err.response?.data?.detail || 'Already claimed by another driver!', 'error');
+            const detail = err.response?.data?.detail;
+            showToast(Array.isArray(detail) ? detail[0].msg : (detail || 'Already claimed by another driver!'), 'error');
         }
     };
 

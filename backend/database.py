@@ -35,9 +35,9 @@ tow_trucks_collection = db["tow_trucks"]
 async def verify_db_connection():
     try:
         await client.admin.command('ping')
-        print(f"✅ Successfully connected to MongoDB: {DB_NAME}")
+        print(f"SUCCESS: Successfully connected to MongoDB: {DB_NAME}")
     except Exception as e:
-        print(f"❌ Could not connect to MongoDB: {e}")
+        print(f"ERROR: Could not connect to MongoDB: {e}")
 
 async def seed_default_admin():
     """Ensures at least one default admin exists for testing."""
@@ -49,4 +49,4 @@ async def seed_default_admin():
             "name": "Super Admin",
             "createdAt": datetime.utcnow()
         })
-        print(f"✅ Default admin seeded with phone: {default_admin_phone}")
+        print(f"SUCCESS: Default admin seeded with phone: {default_admin_phone}")

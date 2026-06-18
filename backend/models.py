@@ -91,6 +91,15 @@ class MechanicCreate(BaseModel):
     lat: float
     lng: float
 
+class OtpRequest(BaseModel):
+    phone: str
+    role: str
+
+class OtpVerify(BaseModel):
+    phone: str
+    otp: str
+    role: str
+
 class MessageModel(BaseModel):
     sender: str  # 'user' or 'mechanic'
     text: str

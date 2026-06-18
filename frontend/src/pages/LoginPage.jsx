@@ -51,6 +51,7 @@ const LoginPage = ({ theme, showToast }) => {
         }
         setLoading(true);
         try {
+            localStorage.removeItem('token');
             const response = await requestOtp(phone, role);
             setOtpStep(true);
             setTimer(30);
@@ -60,7 +61,8 @@ const LoginPage = ({ theme, showToast }) => {
                 showToast(`Demo Mode: OTP is ${response.otp_debug}`, 'info');
             }
         } catch (err) {
-            const msg = err.response?.data?.detail || 'Failed to send OTP. Try again.';
+            const detail = err.response?.data?.detail;
+            const msg = Array.isArray(detail) ? detail[0].msg : (detail || 'Failed to send OTP. Try again.');
             showToast(msg, 'error');
         } finally {
             setLoading(false);
@@ -104,7 +106,8 @@ const LoginPage = ({ theme, showToast }) => {
                 navigate('/');
             }
         } catch (err) {
-            const msg = err.response?.data?.detail || 'Invalid OTP. Please try again.';
+            const detail = err.response?.data?.detail;
+            const msg = Array.isArray(detail) ? detail[0].msg : (detail || 'Invalid OTP. Please try again.');
             showToast(msg, 'error');
         } finally {
             setLoading(false);
@@ -131,7 +134,8 @@ const LoginPage = ({ theme, showToast }) => {
             showToast('Welcome, Admin!', 'success');
             navigate('/admin');
         } catch (err) {
-            const msg = err.response?.data?.detail || 'Invalid admin credentials.';
+            const detail = err.response?.data?.detail;
+            const msg = Array.isArray(detail) ? detail[0].msg : (detail || 'Invalid admin credentials.');
             showToast(msg, 'error');
         } finally {
             setLoading(false);

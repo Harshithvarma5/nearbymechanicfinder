@@ -21,6 +21,21 @@ api.interceptors.request.use((config) => {
     return Promise.reject(error);
 });
 
+// Normalize 422 Validation Errors globally so React doesn't crash when rendering detail
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 422 && Array.isArray(error.response.data?.detail)) {
+            const detailStr = error.response.data.detail.map(e => {
+                const field = e.loc && e.loc.length > 0 ? e.loc[e.loc.length - 1] : '';
+                return field ? `${field}: ${e.msg}` : e.msg;
+            }).join(', ');
+            error.response.data.detail = detailStr;
+        }
+        return Promise.reject(error);
+    }
+);
+
 export const getMechanics = async () => {
     const response = await api.get('/mechanics');
     return response.data;
@@ -105,15 +120,15 @@ export const updateMechanicLocation = async (requestId, lat, lng) => {
 
 // Authentication & OTP
 export const requestOtp = async (phone, role) => {
-    const response = await api.post('/auth/request-otp', null, {
-        params: { phone, role }
-    });
+    const response = await api.post('/auth/request-otp', { phone, role });
     return response.data;
 };
 
 export const verifyOtp = async (phone, otp, role) => {
-    const response = await api.post('/auth/verify-otp', null, {
-        params: { phone, otp, role }
+    const response = await api.post('/auth/verify-otp', {
+        phone,
+        otp: String(otp).trim(),
+        role,
     });
     return response.data;
 };

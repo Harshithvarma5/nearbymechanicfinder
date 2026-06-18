@@ -6,4 +6,5 @@ pydantic
 motor
 httpx
 PyJWT
+google-generativeai
 python-multipart
